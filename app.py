@@ -1,9 +1,8 @@
-from flask import Flask, render_template_string, Response
+import streamlit as st
 import cv2
 import mediapipe as mp
 import numpy as np
-
-app = Flask(__name__)
+from PIL import Image
 
 # Initialize MediaPipe Pose class
 mp_pose = mp.solutions.pose
@@ -23,28 +22,27 @@ def calculate_angle(a, b, c):
     return angle
 
 # Squat detection logic
-def squat_detector():
+def detect_squats():
     cap = cv2.VideoCapture(0)
     squat_count = 0
     stage = None
 
+    # Start webcam feed and detect squats
+    stframe = st.empty()  # Placeholder for Streamlit frame to update the webcam feed
     with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Convert the frame to RGB
+            # Convert the frame to RGB for MediaPipe processing
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image.flags.writeable = False
-
-            # Process the image and detect pose landmarks
             results = pose.process(image)
-            image.flags.writeable = True
 
             # Convert back to BGR for OpenCV rendering
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
+            # Extract landmarks and calculate the angle
             try:
                 landmarks = results.pose_landmarks.landmark
 
@@ -65,81 +63,36 @@ def squat_detector():
                 if hip_knee_angle < 90 and stage == 'up':
                     stage = "down"
                     squat_count += 1
-                    print(f"Squat Count: {squat_count}")
+                    st.session_state["squat_count"] = squat_count
 
-                # Add count and feedback on the image
+                # Add squat count to the image
                 cv2.putText(image, f'Squats: {squat_count}', (50, 100),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
             except Exception as e:
                 pass
 
-            # Render landmarks and pose connections
+            # Draw landmarks and pose connections on the image
             mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
-            # Encode the image to bytes and yield it to Flask
-            ret, buffer = cv2.imencode('.jpg', image)
-            image_bytes = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + image_bytes + b'\r\n')
+            # Show the image in Streamlit
+            frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB for Streamlit
+            img = Image.fromarray(frame)
+            stframe.image(img, channels="RGB")
 
         cap.release()
 
-# Flask route to display the main page
-@app.route('/')
-def index():
-    return render_template_string('''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Squat Detection</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                text-align: center;
-                background-color: #f4f4f4;
-            }
-            .container {
-                margin-top: 20px;
-            }
-            h1 {
-                color: #2c3e50;
-                margin-bottom: 20px;
-            }
-            .video-container {
-                display: inline-block;
-                border: 5px solid #3498db;
-                padding: 10px;
-                margin: 20px;
-            }
-            #videoElement {
-                width: 640px;
-                height: 480px;
-            }
-            p#feedback {
-                font-size: 18px;
-                margin-top: 20px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Squat Detection</h1>
-            <div class="video-container">
-                <img src="{{ url_for('video_feed') }}" id="videoElement" alt="Video Feed">
-            </div>
-            <p id="feedback">Perform squats to start detection.</p>
-        </div>
-    </body>
-    </html>
-    ''')
+# Streamlit Layout
+st.title("Squat Detection App")
+st.write("Perform squats in front of your webcam to start detection.")
 
-# Flask route for the video feed
-@app.route('/video_feed')
-def video_feed():
-    return Response(squat_detector(), mimetype='multipart/x-mixed-replace; boundary=frame')
+# Initialize squat count in session state
+if "squat_count" not in st.session_state:
+    st.session_state["squat_count"] = 0
 
-if __name__ == "__main__":
-    app.run(debug=True)
+# Start the squat detection
+if st.button("Start Squat Detection"):
+    detect_squats()
+
+# Display the squat count
+st.write(f"Total Squats: {st.session_state['squat_count']}")
